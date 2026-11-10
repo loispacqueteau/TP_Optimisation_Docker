@@ -1,4 +1,3 @@
-
 FROM node:20-alpine AS builder
 
 WORKDIR /app
@@ -7,7 +6,6 @@ COPY package*.json ./
 RUN npm ci
 
 COPY . .
-RUN npm run build
 
 FROM node:20-alpine AS runner
 
@@ -19,8 +17,7 @@ RUN addgroup -g 1001 -S nodejs && \
 COPY package*.json ./
 RUN npm ci --only=production
 
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/server.js ./
+COPY server.js ./
 
 USER nodejs
 
