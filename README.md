@@ -1,36 +1,53 @@
-# TP : Optimisation Docker - TP Node.js
+# TP : Optimisation d'une application Node.js et de son Dockerfile
 
-Ce dépôt documente la démarche d'optimisation itérative d'un conteneur Docker pour une application Node.js, réalisée dans le cadre du cours d'intégration continue à l'Université Toulouse Capitole (encadré par Harold Parpex).
+Ce dépôt documente la démarche d'optimisation itérative d'un conteneur Docker et du code source pour une application Node.js, réalisée dans le cadre du cours d'intégration continue à l'Université Toulouse Capitole (encadré par Harold Parpex).
 
---- 
+## 📋 Table des matières
+
+1. [Analyse de la Baseline (État Initial)](#1-analyse-de-la-baseline-état-initial)
+2. [Suivi de la taille des images (Tableau comparatif)](#2-suivi-de-la-taille-des-images-tableau-comparatif)
+3. [Stratégie des commits atomiques](#3-stratégie-des-commits-atomiques)
+4. [Optimisation du Code Applicatif (`server.js`)](#4-optimisation-du-code-applicatif-serverjs)
+5. [Le Dockerfile Optimisé & `.dockerignore`] (#5-le-dockerfile-optimisé--dockerignore)
+6. [Commandes utiles](#6-commandes-utiles)
 
 ## 1. Analyse de la Baseline (État Initial)
 
-Le `Dockerfile` initial fourni présentait plusieurs anti-patterns majeurs :
-- **Utilisation de `node:latest`** : Image de base très lourde (basée sur Debian complet), non figée, entraînant des risques de rupture de build et une surface d'attaque sécurité importante.
-- **Copie préalable de `node_modules` (`COPY node_modules ./node_modules`)** : Intégration de fichiers locaux non maîtrisés et alourdissement massif du contexte de build.
-- **Ordre des instructions inefficace** : `RUN npm install` exécuté *après* `COPY . /app`, ce qui invalide le cache Docker à la moindre modification de code.
-- **Installation superflue de paquets système** : `apt-get install build-essential ...` inutile pour cette application simple.
-- **Exécution en tant que `root`** : Risque de sécurité élevé en cas de compromission du conteneur.
-
----
+Le `Dockerfile` initial fourni présentait plusieurs anti-patterns majeurs corrigés au fil des étapes :
+* **Utilisation de `node:latest`** : Image de base très lourde (basée sur Debian complet) et non figée.
+* **Copie préalable de `node_modules` (`COPY node_modules ./node_modules`)** : Intégration de fichiers locaux non maîtrisés.
+* **Ordre des instructions inefficace** : `RUN npm install` exécuté *après* `COPY . /app`, invalidant le cache inutilement.
+* **Exécution en tant que `root`** : Risque de sécurité élevé.
 
 ## 2. Suivi de la taille des images (Tableau comparatif)
 
 Voici l'évolution mesurée de la taille des images Docker après chaque étape d'optimisation :
 
-| Étape | Description / Stratégie | Taille de l'image | Gains / Justifications |
-| :--- | :--- | :--- | :--- |
-| **0. Baseline** | `node:latest` + `COPY node_modules` + `apt-get` | ~1.1 Go | Image initiale non optimisée, lourde et non sécurisée. |
-| **1. Nettoyage & Alpine** | `node:20-alpine` + `npm ci --only=production` | ~180 Mo | Passage à une distribution Alpine ultra-légère et exclusion des dépendances de dev. |
-| **2. Sécurisation & Cache** | Optimisation de l'ordre des `COPY` et utilisateur non-root | ~120 Mo | Exploitation optimale du cache de build Docker et exécution en utilisateur non-privilégié (`USER node`). |
+| Étape | Description / Stratégie | Taille de l'image | Gains / Justifications | 
+| ----- | ----- | ----- | ----- | 
+| **0. Baseline** | `node:latest` + `COPY node_modules` + `apt-get` | ~1.1 Go | Image initiale non optimisée, lourde et non sécurisée. | 
+| **1. Nettoyage & Alpine** | `node:20-alpine` + `npm ci --only=production` | ~180 Mo | Passage à une distribution Alpine ultra-légère et exclusion des dépendances de dev. | 
+| **2. Sécurisation & Cache** | Optimisation du cache, `.dockerignore` et utilisateur non-root | ~120 Mo | Contexte de build réduit, exploitation du cache Docker et exécution en utilisateur non-privilégié (`USER node`). | 
 
----
+## 3. Stratégie des commits atomiques
 
-## 3. Le Dockerfile Optimisé (Version Finale)
+Conformément aux consignes du TP, le dépôt Git a été structuré avec des commits atomiques représentant chaque jalon :
+1. `feat(docker): initial baseline setup` - Ajout de l'application et du Dockerfile non optimisé.
+2. `refactor(docker): switch to node-alpine and fix npm install order` - Allègement de l'image de base et optimisation du cache.
+3. `refactor(app): optimize big file route using streams` - Remplacement de la lecture synchrone bloquante par un flux asynchrone.
+4. `security(docker): run container as non-root user and add dockerignore` - Renforcement de la sécurité et exclusion des fichiers superflus.
 
+## 4. Optimisation du Code Applicatif (`server.js`)
+
+L'analyse initiale du code a mis en évidence un point critique de performance corrigé :
+* **Problème initial** : Utilisation de `fs.readFileSync` sur la route `/big`, ce qui bloque complètement la boucle d'événements (*Event Loop*) de Node.js lors d'une requête simultanée.
+* **Correction appliquée** : Utilisation de `fs.createReadStream().pipe(res)` pour streamer le contenu du fichier de manière asynchrone, garantissant une scalabilité optimale sous forte charge.
+
+## 5. Le Dockerfile Optimisé & `.dockerignore`
+
+### `Dockerfile`
 ```dockerfile
-# --- Étape unique optimisée (ou multi-stage si build requis) ---
+# Utilisation d'une image LTS Alpine légère et figée
 FROM node:20-alpine
 
 WORKDIR /app
@@ -53,17 +70,20 @@ ENV NODE_ENV=production
 CMD ["node", "server.js"]
 ```
 
----
+### `.dockerignore`
+```text
+node_modules
+npm-debug.log
+Dockerfile
+docker-compose*.yml
+.git
+README.md
+*.zip
+*.pptx
+*.py
+```
 
-## 4. Analyse du code applicatif (`server.js`) et pistes d'amélioration
-
-L'analyse du serveur Node.js a mis en évidence un point critique de performance :
-- **Utilisation de `fs.readFileSync` sur la route `/big`** : Cette opération synchrone bloque complètement la boucle d'événements (Event Loop) de Node.js lors d'une requête, impactant la scalabilité. 
-- *Piste d'amélioration* : Remplacer par un flux de lecture asynchrone (`fs.createReadStream`) pour fluidifier le traitement des requêtes simultanées.
-
----
-
-## 5. Commandes utiles
+## 6. Commandes utiles
 
 Pour construire et tester l'image finale en local :
 ```bash
